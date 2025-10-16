@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 아이스크림 타이머 (3팀 · 라이트 할로윈)</title>
+  <!-- ✅ 빌드 없이 동작: Preact + HTM (JSX 불필요) -->
+  <script src="https://unpkg.com/preact@10.22.0/dist/preact.umd.js" crossorigin></script>
+  <script src="https://unpkg.com/preact@10.22.0/hooks/dist/hooks.umd.js" crossorigin></script>
+  <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js" crossorigin></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ✅ 인쇄: 선택된 결과 카드만 한 장 출력 (실물 8×12cm) */
+    @media print {
+      @page { size: A4; margin: 10mm; }
+      body * { display: none !important; }
+      #print-portal, #print-portal * { display: block !important; }
+      #print-portal { position: static !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+      #print-portal .print-target {
+        box-shadow: none !important; border: none !important; background: white !important;
+        width: 80mm !important; height: 120mm !important; box-sizing: border-box;
+        margin: 0 auto !important; padding: 6mm !important; page-break-inside: avoid !important; page-break-after: avoid !important;
+      }
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-b from-[#FFF7E6] to-[#FFF0D9]">
+  <div id="root"></div>
+
+  <script>
+    // --------------------------------------------------
+    // 초기화 & 안전가드
+    // --------------------------------------------------
+    const { h, render } = preact;
+    const hooks = (preact && preact.hooks) || window.preactHooks || null;
+    if (!hooks) {
+      document.getElementById('root').innerHTML = '<div class="p-4 text-red-700">Preact hooks 로드 실패. 네트워크(CDN) 차단 여부를 확인해 주세요.</div>';
+      throw new Error('Preact hooks not loaded');
+    }
+    if (!window.htm) {
+      document.getElementById('root').innerHTML = '<div class="p-4 text-red-700">HTM 로드 실패. 네트워크(CDN) 차단 여부를 확인해 주세요.</div>';
+      throw new Error('HTM not loaded');
+    }
+    const { useRef, useState, useEffect, useMemo } = hooks;
+    const html = htm.bind(h);
+
+    // --------------------------------------------------
+    // 유틸리티
+    // --------------------------------------------------
+    const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+    const toMMSS = (s) => { const m = Math.floor(s/60), ss = Math.floor(s%60); return `${m}:${ss.toString().padStart(2,'0')}`; };
+    const hashToUnit = (str) => { let hh=2166136261; for (let i=0;i<str.length;i++){ hh ^= str.charCodeAt(i); hh += (hh<<1)+(hh<<4)+(hh<<7)+(hh<<8)+(hh<<24);} return ((hh>>>0)%10000)/10000; };
+
+    function estimateSecondsShared({ name, height, weight, shakingStyle }) {
+      const hM = height / 100; const bmi = weight / (hM * hM);
+      const base = 190; const bmiOpt = 22, sigma = 3.5;
+      const fitness = Math.exp(-Math.pow((bmi - bmiOpt) / sigma, 2) / 2);
+      const fitnessFactor = 1.2 - 0.45 * fitness; // fitness=1 -> 0.75
+      const styleFactor = shakingStyle === 'powerful' ? 0.92 : (shakingStyle === 'gentle' ? 1.08 : 1.0);
+      const jitter = 0.975 + hashToUnit(`${name}|${height}|${weight}|${shakingStyle}`) * 0.05;
+      return Math.round(clamp(base * fitnessFactor * styleFactor * jitter, 120, 240));
+    }
+
+    // --------------------------------------------------
+    // 단일 레인
+    // --------------------------------------------------
+    function TimerLane({ laneId, onRequestPrint, compact = true }) {
+      const [name, setName] = useState('');
+      const [height, setHeight] = useState(170);
+      const [weight, setWeight] = useState(60);
+      const [shakingStyle, setShakingStyle] = useState('normal');
+
+      const [seededTime, setSeededTime] = useState(0);
+      const [remaining, setRemaining] = useState(0);
+      const [running, setRunning] = useState(false);
+      const [completed, setCompleted] = useState(false);
+      const [result, setResult] = useState(null); // 'teto' | 'egen' | null
+      const [elapsedSec, setElapsedSec] = useState(0);
+
+      const tickRef = useRef(null);
+      const startTimeRef = useRef(null);
+      const pausedAtRef = useRef(null);
+
+      useEffect(() => {
+        const s = estimateSecondsShared({ name, height, weight, shakingStyle });
+        setSeededTime(s);
+        if (!running && !completed && result === null) setRemaining(s);
+      }, [name, height, weight, shakingStyle]);
+
+      useEffect(() => {
+        if (!running) return;
+        if (!startTimeRef.current) startTimeRef.current = performance.now();
+        const loop = (now) => {
+          if (!running) return;
+          const elapsed = (now - startTimeRef.current) / 1000;
+          const left = Math.max(0, seededTime - elapsed);
+          setRemaining(left);
+          if (left <= 0) {
+            setRunning(false);
+            setElapsedSec(Math.round(seededTime));
+            setResult('egen');
+            beep();
+            return;
+          }
+          tickRef.current = requestAnimationFrame(loop);
+        };
+        tickRef.current = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(tickRef.current);
+      }, [running, seededTime]);
+
+      const start = () => { setResult(null); setCompleted(false); setElapsedSec(0); setRemaining(seededTime); startTimeRef.current = performance.now(); pausedAtRef.current = null; setRunning(true); };
+      const pause  = () => { if (!running) return; setRunning(false); pausedAtRef.current = remaining; };
+      const resume = () => { if (running || pausedAtRef.current == null) return; const pl=pausedAtRef.current; setRunning(true); startTimeRef.current = performance.now() - (seededTime - pl) * 1000; };
+      const reset  = () => { setRunning(false); setCompleted(false); setResult(null); setElapsedSec(0); setRemaining(seededTime); startTimeRef.current = null; pausedAtRef.current = null; };
+      const markCompleted = () => { setCompleted(true); setRunning(false); const elapsed = Math.round(seededTime - remaining); setElapsedSec(clamp(elapsed, 0, seededTime)); setResult(remaining > 0 ? 'teto' : 'egen'); if (!(remaining > 0)) beep(); };
+
+      const beep = () => { try { const ctx = new (window.AudioContext||window.webkitAudioContext)(); const o = ctx.createOscillator(), g = ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.type='square'; o.frequency.value=880; g.gain.value=0.05; o.start(); setTimeout(()=>{ o.stop(); ctx.close(); }, 280); } catch {} };
+
+      const canvasRef = useRef(null); useEffect(() => { return; }, [result]); // confetti disabled
+
+      const bigTimerClass = useMemo(() => (compact ? 'text-3xl md:text-4xl font-extrabold tabular-nums' : 'text-5xl md:text-6xl font-extrabold tabular-nums'), [compact]);
+      const printId = `print-card-${laneId}`;
+
+      return html`
+        <div class=${`bg-white rounded-xl border-2 border-black shadow-[6px_6px_0_0_#000] ${compact ? 'p-3' : 'p-4'} flex flex-col items-center justify-between relative overflow-hidden`}>
+          <div class="w-full flex items-center justify-between">
+            <div class="text-sm text-slate-600">팀 #${laneId}</div>
+            <span class="text-xs text-slate-500">남은 시간</span>
+          </div>
+          <div class="w-full flex items-center justify-center mt-0.5 mb-2">
+            <div class=${bigTimerClass} style=${{letterSpacing:'0.01em'}}>${toMMSS(remaining)}</div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 w-full">
+            <input value=${name} onInput=${e=>setName(e.currentTarget.value)} placeholder="이름" class="col-span-2 border-2 border-black rounded-lg px-3 py-1.5 text-sm" />
+            <div>
+              <label class="text-xs">키(cm)</label>
+              <input type="number" min="120" max="210" value=${height} onInput=${e=>setHeight(Number(e.currentTarget.value))} class="border-2 border-black rounded-lg px-3 py-1.5 w-full text-sm" />
+            </div>
+            <div>
+              <label class="text-xs">몸무게(kg)</label>
+              <input type="number" min="30" max="150" value=${weight} onInput=${e=>setWeight(Number(e.currentTarget.value))} class="border-2 border-black rounded-lg px-3 py-1.5 w-full text-sm" />
+            </div>
+            <div class="col-span-2">
+              <div class="text-xs">쉐이킹 스타일</div>
+              <div class="flex gap-1.5 mt-1">
+                ${[
+                  {k:'gentle', t:'부드럽게'},
+                  {k:'normal', t:'보통'},
+                  {k:'powerful', t:'파워풀'},
+                ].map(v => html`<button type="button" onClick=${()=>setShakingStyle(v.k)} class=${`rounded-lg border-2 border-black ${compact ? 'px-3 text-[13px]' : 'px-3.5 text-[14px]'} py-1.5 whitespace-nowrap ${shakingStyle===v.k?'bg-orange-300':'bg-white'}`}>${v.t}</button>`)}
+              </div>
+            </div>
+          </div>
+          <div class="mt-2 p-2 rounded-lg w-full bg-orange-100 border-2 border-black">
+            <div class="text-xs text-slate-600">예상 제한시간</div>
+            <div class="text-xl font-bold">${toMMSS(seededTime)}</div>
+          </div>
+          <div class="flex gap-1.5 mt-2 w-full justify-between">
+            <button onClick=${start} class="px-3 py-1.5 text-[13px] rounded-lg border-2 border-black bg-orange-400 hover:bg-orange-300">시작</button>
+            <button onClick=${pause} class="px-3 py-1.5 text-[13px] rounded-lg border-2 border-black bg-white hover:bg-neutral-100">일시정지</button>
+            <button onClick=${resume} class="px-3 py-1.5 text-[13px] rounded-lg border-2 border-black bg-white hover:bg-neutral-100">재개</button>
+            <button onClick=${reset} class="px-3 py-1.5 text-[13px] rounded-lg border-2 border-black bg-white hover:bg-neutral-100">리셋</button>
+            <button onClick=${markCompleted} class="px-3 py-1.5 text-[13px] rounded-lg border-2 border-black bg-purple-400 hover:bg-purple-300 text-black">완료</button>
+          </div>
+          <div id=${printId} class="print-target w-full mt-3 border rounded-2xl p-3 bg-white">
+            <div class="flex items-center gap-3">
+              <img src="school_logo.png" alt="학교 로고" class="w-10 h-10 object-contain" />
+              <div class="text-xs text-slate-600">Maker & AI Festival 2025</div>
+            </div>
+            <div class="text-base text-slate-700 font-extrabold mt-2 break-keep">나는 테토일까? 에겐일까?</div>
+            <div class="text-base text-slate-700 font-extrabold">그 결과는?</div>
+            ${result === null && html`<div class="text-slate-700 text-sm mt-2">진행 중… 완료 버튼을 눌러 결과를 확인하세요.</div>`}
+            ${result === 'teto' && html`<div class="mt-2"><div class="text-xl font-black">당신은 테토! 🎉</div><div class="text-sm text-slate-700">AI가 제시한 제한시간 ${toMMSS(seededTime)} 내에 완성했습니다.</div><div class="mt-3 hidden print:block"><img src="success_photo.png" alt="성공 이미지" class="w-full max-h-96 object-contain rounded-lg border" /></div></div>`}
+            ${result === 'egen' && html`<div class="mt-2"><div class="text-xl font-black">당신은 에겐! 😅</div><div class="text-sm text-slate-700">다음에는 얼음·소금 비율을 더 체크하고 강하게 흔들어보세요!</div><div class="mt-3 hidden print:block"><img src="fail_photo.png" alt="실패 이미지" class="w-full max-h-96 object-contain rounded-lg border" /></div></div>`}
+            <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-600">
+              <div>참가자: ${name || '—'}</div>
+              <div>예상시간: ${toMMSS(seededTime)}</div>
+              <div class="col-span-2">아이스크림 완성까지 걸린 시간: ${result ? toMMSS(elapsedSec) : '—'}</div>
+            </div>
+            <button onClick=${()=>onRequestPrint(printId)} class="mt-3 px-3 py-2 rounded-xl border w-full">결과 카드 인쇄</button>
+          </div>
+          <canvas ref=${canvasRef} class="absolute inset-0 pointer-events-none"></canvas>
+        </div>`;
+    }
+
+    // --------------------------------------------------
+    // 앱 루트 (3팀, 모바일 1열 / 데스크톱 3열) + 자동 스케일(축소만)
+    // --------------------------------------------------
+    function App() {
+      const gridRef = useRef(null);
+      const headerRef = useRef(null);
+      const [scale, setScale] = useState(1);
+
+      const handlePrint = (printId) => {
+        const target = document.getElementById(printId);
+        const old = document.getElementById('print-portal'); if (old) old.remove();
+        const portal = document.createElement('div'); portal.id = 'print-portal';
+        portal.innerHTML = target ? target.outerHTML : '<div class="p-6">출력할 카드를 찾지 못했습니다.</div>';
+        document.body.appendChild(portal);
+        const cleanup = () => { try { portal.remove(); } catch {} window.onafterprint = null; };
+        window.onafterprint = cleanup; setTimeout(() => window.print(), 50);
+      };
+
+      const recomputeScale = () => {
+        if (!gridRef.current) { setScale(1); return; }
+        const headerH = headerRef.current ? headerRef.current.getBoundingClientRect().height : 0;
+        const availH = window.innerHeight - headerH - 12; // 상하 여유
+        const availW = window.innerWidth - 12;
+        const rect = gridRef.current.getBoundingClientRect();
+        const natH = gridRef.current.scrollHeight || rect.height;
+        const natW = gridRef.current.scrollWidth  || rect.width;
+        const s = Math.min(1, availH / natH, availW / natW);
+        setScale((s > 0 && isFinite(s)) ? s : 1);
+      };
+
+      useEffect(() => {
+        recomputeScale();
+        const onResize = () => recomputeScale();
+        window.addEventListener('resize', onResize);
+        window.addEventListener('orientationchange', onResize);
+        return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
+      }, []);
+
+      return html`
+        <div class="min-h-screen text-slate-900 p-3">
+          <div class="max-w-6xl mx-auto">
+            <div ref=${headerRef} class="bg-white rounded-xl border-2 border-black shadow-[6px_6px_0_0_#000] p-4 mb-3">
+              <div class="grid sm:grid-cols-[1fr_auto] items-center gap-3">
+                <div class="flex items-center gap-3">
+                  <img src="school_logo.png" alt="학교 로고" class="w-12 h-12 object-contain" />
+                  <div>
+                    <div class="text-2xl font-extrabold tracking-tight">🎃 나는 테토일까? 에겐일까?</div>
+                    <div class="text-xs text-slate-600">Maker & AI Festival 2025</div>
+                  </div>
+                </div>
+                <img src="booth_image.png" alt="부스 이미지" class="hidden sm:block h-24 max-w-[220px] object-contain justify-self-end" />
+              </div>
+              <div class="mt-2 h-1 rounded-full bg-gradient-to-r from-orange-200 via-purple-200 to-orange-200"></div>
+              <div class="text-sm text-slate-700 mt-2">입력값에 따라 AI가 개인 맞춤 제작 시간을 예측합니다. 제한 시간 안에 아이스크림을 완성해보세요!</div>
+              <div class="text-xs text-slate-600 mt-1">※ 결과 확정 후 인쇄 버튼을 누르면 해당 팀 카드만 인쇄됩니다.</div>
+            </div>
+
+            <div ref=${gridRef} class=${`grid grid-cols-1 sm:grid-cols-3 gap-2`} style=${scale < 1 ? { transform: `scale(${scale})`, transformOrigin: 'top left', width: `${100/scale}%` } : null}>
+              ${[1,2,3].map(id => html`<${TimerLane} key=${id} laneId=${id} onRequestPrint=${handlePrint} compact=${true} />`)}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // --------------------------------------------------
+    // 스모크 테스트 (보존 + 추가)
+    // --------------------------------------------------
+    function runSmokeTests() {
+      try {
+        const estimate = (h, w, style='normal', name='') => {
+          const hM = h/100; const bmi = w/(hM*hM);
+          const base = 190, bmiOpt = 22, sigma = 3.5;
+          const fitness = Math.exp(-Math.pow((bmi - bmiOpt)/sigma,2)/2);
+          const fitnessFactor = 1.2 - 0.45 * fitness;
+          const styleFactor = style==='powerful'?0.92:(style==='gentle'?1.08:1.0);
+          let hh=2166136261; const key=`${name}|${h}|${w}|${style}`;
+          for(let i=0;i<key.length;i++){ hh^=key.charCodeAt(i); hh+=(hh<<1)+(hh<<4)+(hh<<7)+(hh<<8)+(hh<<24); }
+          const jitter=0.975+(((hh>>>0)%10000)/10000)*0.05;
+          return Math.round(Math.min(240, Math.max(120, base*fitnessFactor*styleFactor*jitter)));
+        };
+
+        const nearFit = estimate(170,63,'normal');
+        const highBmi = estimate(170,85,'normal');
+        const lowBmi  = estimate(170,48,'normal');
+        console.assert(nearFit<=240 && nearFit>=120, '[TEST] bounds (nearFit)');
+        console.assert(highBmi<=240 && lowBmi<=240, '[TEST] upper bound 240s');
+        console.assert(nearFit<highBmi && nearFit<lowBmi, '[TEST] fitness directionality');
+
+        const d1 = estimate(170,60,'normal','A');
+        const d2 = estimate(170,60,'normal','A');
+        console.assert(d1===d2, '[TEST] deterministic with same inputs');
+
+        const extremeHigh = estimate(160,110,'normal');
+        const extremeLow  = estimate(190,45,'normal');
+        console.assert(extremeHigh<=240 && extremeLow<=240, '[TEST] extremes capped at 240s');
+
+        const normalStyle   = estimate(170,60,'normal','B');
+        const gentleStyle   = estimate(170,60,'gentle','B');
+        const powerfulStyle = estimate(170,60,'powerful','B');
+        console.assert(powerfulStyle<=normalStyle && normalStyle<=gentleStyle, '[TEST] style factor ordering');
+
+        const lane1 = estimate(170,60,'normal','Lane1');
+        const lane2 = estimate(170,60,'normal','Lane2');
+        console.assert(typeof lane1==='number' && typeof lane2==='number', '[TEST] multi-lane values numeric');
+
+        // ✅ 추가 테스트 1: 포맷/보조 유틸
+        console.assert(toMMSS(0)=='0:00' && toMMSS(65)=='1:05' && toMMSS(240)=='4:00', '[TEST] toMMSS format');
+        console.assert(clamp(5,10,20)===10 && clamp(25,10,20)===20 && clamp(15,10,20)===15, '[TEST] clamp works');
+
+        // ✅ 추가 테스트 2: HTM 다중 자식 안전성 (p.push 오류 재발 방지)
+        const tmp = document.createElement('div');
+        render(html`<div>${[1,2,3].map(n => html`<span>${n}</span>`)}</div>`, tmp);
+        console.assert(tmp.textContent.replace(/\s+/g,'').includes('123'), '[TEST] HTM array children');
+        tmp.remove();
+
+        // ✅ 추가 테스트 3: App 렌더 후 레인 3개 존재
+        const host = document.createElement('div');
+        render(h(App, {}), host);
+        const lanes = host.querySelectorAll('.print-target');
+        console.assert(lanes.length === 3, '[TEST] three lanes present');
+        host.remove();
+
+        console.log('[SmokeTests] OK');
+      } catch (e) {
+        console.error('[SmokeTests] FAILED', e);
+      }
+    }
+
+    if (typeof window !== 'undefined') setTimeout(runSmokeTests, 0);
+
+    // 부트스트랩
+    render(h(App, {}), document.getElementById('root'));
+  </script>
+</body>
+</html>

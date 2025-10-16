@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🎃 귀여운 할로윈 테마 - 토핑 개수 뽑기</title>
+  <style>
+    body {
+      margin:0;
+      font-family: "Noto Sans KR", sans-serif;
+      background: linear-gradient(180deg, #fbe4ff, #ffe9d6, #fff6f0);
+      display:flex; align-items:center; justify-content:center;
+      min-height:100vh;
+    }
+    .card {
+      width: min(90vw, 560px);
+      background: #fff;
+      border-radius: 24px;
+      border: 3px solid #ffb347; /* 할로윈 주황 */
+      box-shadow: 0 10px 30px rgba(180,100,255,.25);
+      padding: 32px;
+      text-align:center;
+      position: relative;
+    }
+    /* 상단 장식: 귀여운 호박과 사탕 */
+    .card::before {
+      content: "🎃";
+      position: absolute;
+      font-size: 40px;
+      left: 16px; top: 16px;
+    }
+    .card::after {
+      content: "🍬";
+      position: absolute;
+      font-size: 32px;
+      right: 16px; top: 16px;
+    }
+    h2 {
+      color:#ff7b00;
+      font-size:20px;
+      margin-bottom:12px;
+      line-height:1.5;
+    }
+    h1 {
+      color:#7a3cff;
+      margin:12px 0;
+      font-size:26px;
+    }
+    .sub {
+      color:#444;
+      margin-bottom:22px;
+      font-size:18px;
+    }
+    .display {
+      font-size:80px;
+      font-weight:bold;
+      width:200px; height:200px;
+      margin:0 auto 20px;
+      border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(circle at 30% 30%, #fff7e6 0%, #ffd280 70%, #ffb347 100%);
+      color:#7a3cff;
+      box-shadow: inset 0 8px 18px rgba(255,255,255,.6), 0 10px 30px rgba(255,123,0,.25);
+    }
+    .range {
+      color:#7a3cff;
+      font-size:16px;
+      margin-bottom:20px;
+    }
+    .row {
+      display:flex; gap:12px; justify-content:center;
+    }
+    button {
+      flex:1;
+      font-size:18px;
+      padding:14px;
+      border:none;
+      border-radius:16px;
+      cursor:pointer;
+      font-weight:bold;
+    }
+    .primary {
+      background:linear-gradient(180deg,#ffb347,#ff7b00);
+      color:#fff;
+      box-shadow:0 6px 14px rgba(255,123,0,.35);
+    }
+    .ghost {
+      background:linear-gradient(180deg,#d6c2ff,#a680ff);
+      color:#fff;
+      box-shadow:0 6px 14px rgba(122,60,255,.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>당신은 에겐!<br>다음에는 더 강하게 흔들어보세요!</h2>
+    <h1>토핑 개수 뽑기</h1>
+    <p class="sub">부드러운 당신에게 주어질 토핑 개수는?</p>
+
+    <div class="display" id="result">–</div>
+
+    <p class="range" id="rangeText"></p>
+
+    <div class="row">
+      <button class="primary" id="btnRoll">뽑기</button>
+      <button class="ghost" id="btnReset">초기화</button>
+    </div>
+  </div>
+
+  <script>
+    const SPIN_MIN=0, SPIN_MAX=10, FINAL_MIN=0, FINAL_MAX=4;
+    const SPIN_INTERVAL_MS=60;
+    const $result=document.getElementById('result');
+    const $btnRoll=document.getElementById('btnRoll');
+    const $btnReset=document.getElementById('btnReset');
+    const $rangeText=document.getElementById('rangeText');
+    $rangeText.textContent='아래 뽑기 버튼을 눌러 나온 수 만큼 토핑을 얻어가세요!';
+
+    function randomInt(min,max){return Math.floor(Math.random()*(max-min+1))+min;}
+    let spinTimer=null;
+    function startSpin(){ stopSpin(); spinTimer=setInterval(()=>{ $result.textContent=randomInt(SPIN_MIN,SPIN_MAX); },SPIN_INTERVAL_MS); }
+    function stopSpin(){ if(spinTimer){clearInterval(spinTimer); spinTimer=null;} }
+    startSpin();
+    let locked=false;
+    function lock(ms=450){ locked=true; $btnRoll.disabled=true; setTimeout(()=>{ locked=false; $btnRoll.disabled=false; },ms);}
+    $btnRoll.addEventListener('click',()=>{ if(locked)return; stopSpin(); $result.textContent=randomInt(FINAL_MIN,FINAL_MAX); lock(); });
+    $btnReset.addEventListener('click',()=>{ if(locked)return; startSpin(); lock(200); });
+  </script>
+</body>
+</html>
